@@ -54,6 +54,7 @@ enum TipoPagamento {
   CREDITO
   DEBITO
   VOUCHER
+  FIADO
 }
 
 enum StatusPagamento {
@@ -160,6 +161,8 @@ model Estabelecimento {
   cep             String?
   tipoNegocio     TipoNegocio      @default(SALAO_BELEZA)
   logoUrl         String?
+  proLabore       Decimal?         @db.Decimal(10, 2)
+  saldoMinimo     Decimal?         @db.Decimal(10, 2)
   ativo           Boolean          @default(true)
   criadoEm       DateTime         @default(now())
   atualizadoEm   DateTime         @updatedAt
@@ -180,6 +183,7 @@ model Estabelecimento {
   produtos            Produto[]
   formasPagamento     FormaPagamento[]
   contasReceber       ContaReceber[]
+  caixasDiarios       CaixaDiario[]
 
   @@map("estabelecimentos")
 }
@@ -282,6 +286,7 @@ model Servico {
   estabelecimento   Estabelecimento      @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
   profissionais     ProfissionalServico[]
   agendamentos      AgendamentoServico[]
+  insumos           ServicoInsumo[]
 
   @@index([estabelecimentoId])
   @@map("servicos")
@@ -300,6 +305,19 @@ model ProfissionalServico {
 
   @@unique([profissionalId, servicoId])
   @@map("profissional_servicos")
+}
+
+model ServicoInsumo {
+  id              String   @id @default(cuid())
+  servicoId       String
+  produtoId       String
+  quantidadeUsada Decimal  @db.Decimal(10, 3)
+
+  servico         Servico  @relation(fields: [servicoId], references: [id], onDelete: Cascade)
+  produto         Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@unique([servicoId, produtoId])
+  @@map("servico_insumos")
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -518,6 +536,8 @@ model Produto {
   categoria         String?
   sku               String?
   unidade           String    @default("un")
+  unidadeConsumo    String?
+  capacidadePorUnidade Decimal? @db.Decimal(10, 3)
   quantidade        Int       @default(0)
   estoqueMinimo     Int       @default(0)
   custoUnitario     Decimal   @default(0) @db.Decimal(10, 2)
@@ -528,6 +548,7 @@ model Produto {
 
   estabelecimento   Estabelecimento       @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
   movimentacoes     MovimentacaoEstoque[]
+  servicosInsumo    ServicoInsumo[]
 
   @@index([estabelecimentoId])
   @@map("produtos")
@@ -687,6 +708,34 @@ model SugestaoIA {
   @@index([status])
   @@index([tipo])
   @@map("sugestoes_ia")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CAIXA DIÁRIO
+// ═══════════════════════════════════════════════════════════════════
+
+model CaixaDiario {
+  id                String    @id @default(cuid())
+  estabelecimentoId String
+  data              DateTime  @db.Date
+  saldoInicial      Decimal   @db.Decimal(10, 2)
+  totalEntradas     Decimal   @default(0) @db.Decimal(10, 2)
+  totalSaidas       Decimal   @default(0) @db.Decimal(10, 2)
+  saldoFinal        Decimal?  @db.Decimal(10, 2)
+  saldoConferido    Decimal?  @db.Decimal(10, 2)
+  diferenca         Decimal?  @db.Decimal(10, 2)
+  abertoPor         String?
+  fechadoPor        String?
+  observacoes       String?
+  aberto            Boolean   @default(true)
+  abertoEm          DateTime  @default(now())
+  fechadoEm         DateTime?
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+
+  @@unique([estabelecimentoId, data])
+  @@index([estabelecimentoId])
+  @@map("caixas_diarios")
 }
 
 // ═══════════════════════════════════════════════════════════════════

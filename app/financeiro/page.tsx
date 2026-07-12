@@ -4,8 +4,9 @@ import { useState, useEffect } from "react"
 import {
   DollarSign, ArrowDownRight, FileText, Sparkles,
   CircleDollarSign, Wallet, PiggyBank, Receipt, Plus, RefreshCw, Trash2, Power,
-  Pencil, Check, X, CreditCard, CalendarClock
+  Pencil, Check, X, CreditCard, CalendarClock, Lock, Unlock, Clock
 } from "lucide-react"
+import Link from "next/link"
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area
@@ -65,6 +66,7 @@ interface FinanceiroData {
     despesas: number
     lucro: number
     comissoes: number
+    cmv: number
   }
   receitaPorProf: ReceitaProf[]
   receitaPorServico: ReceitaServico[]
@@ -73,6 +75,15 @@ interface FinanceiroData {
   evolucao: Evolucao[]
   despesasRecentes: Despesa[]
   recorrentes: Recorrente[]
+  margemPorServico: MargemServico[]
+}
+
+interface MargemServico {
+  nome: string
+  preco: number
+  custoInsumos: number
+  margem: number
+  margemPct: number
 }
 
 interface Recebivel {
@@ -109,6 +120,45 @@ export default function FinanceiroPage() {
   const [formasEdit, setFormasEdit] = useState<FormaPag[]>([])
   const [savingFormas, setSavingFormas] = useState(false)
 
+  // Caixa diário
+  const [caixa, setCaixa] = useState<any>(null)
+  const [caixaMov, setCaixaMov] = useState({ totalEntradas: 0, totalSaidas: 0 })
+  const [caixaHistorico, setCaixaHistorico] = useState<any[]>([])
+  const [showAbrirCaixa, setShowAbrirCaixa] = useState(false)
+  const [showFecharCaixa, setShowFecharCaixa] = useState(false)
+  const [caixaSaldoInicial, setCaixaSaldoInicial] = useState("")
+  const [caixaSaldoConferido, setCaixaSaldoConferido] = useState("")
+  const [caixaObs, setCaixaObs] = useState("")
+  const [caixaSaving, setCaixaSaving] = useState(false)
+
+  const loadCaixa = () => {
+    fetch("/api/financeiro/caixa").then((r) => r.json()).then((d) => {
+      setCaixa(d.caixaHoje)
+      setCaixaMov(d.movimentacoesHoje ?? { totalEntradas: 0, totalSaidas: 0 })
+      setCaixaHistorico(d.historico ?? [])
+    }).catch(() => {})
+  }
+
+  const abrirCaixa = async () => {
+    const valor = parseFloat(caixaSaldoInicial.replace(",", "."))
+    if (isNaN(valor) || valor < 0) return
+    setCaixaSaving(true)
+    const res = await fetch("/api/financeiro/caixa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saldoInicial: valor }) })
+    if (res.ok) { setShowAbrirCaixa(false); setCaixaSaldoInicial(""); toast("Caixa aberto"); loadCaixa() }
+    else { const e = await res.json(); toast(e.error ?? "Erro ao abrir caixa") }
+    setCaixaSaving(false)
+  }
+
+  const fecharCaixa = async () => {
+    const valor = parseFloat(caixaSaldoConferido.replace(",", "."))
+    if (isNaN(valor) || valor < 0) return
+    setCaixaSaving(true)
+    const res = await fetch("/api/financeiro/caixa", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ saldoConferido: valor, observacoes: caixaObs }) })
+    if (res.ok) { setShowFecharCaixa(false); setCaixaSaldoConferido(""); setCaixaObs(""); toast("Caixa fechado"); loadCaixa() }
+    else { const e = await res.json(); toast(e.error ?? "Erro ao fechar caixa") }
+    setCaixaSaving(false)
+  }
+
   const load = () => {
     Promise.all([
       fetch("/api/financeiro").then((r) => r.json()),
@@ -118,6 +168,7 @@ export default function FinanceiroPage() {
       if (Array.isArray(rec?.recebiveis)) { setRecebiveis(rec.recebiveis); setRecebiveisStats(rec.stats) }
       setLoading(false)
     }).catch(() => setLoading(false))
+    loadCaixa()
   }
 
   useEffect(() => { load() }, [])
@@ -271,12 +322,97 @@ export default function FinanceiroPage() {
           }} className="text-xs sm:text-sm font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
             <FileText size={15} /> <span className="hidden sm:inline">Exportar</span>
           </button>
+          <Link href="/financeiro/dre"
+            className="text-xs sm:text-sm font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
+            <FileText size={15} /> <span className="hidden sm:inline">DRE</span>
+          </Link>
           <button onClick={abrirFormas}
             className="text-xs sm:text-sm font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
             <CreditCard size={15} /> <span className="hidden sm:inline">Formas de pagamento</span>
           </button>
         </div>
       </div>
+
+      {/* Caixa diário */}
+      <div className="glass-card rounded-2xl p-4 md:p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${caixa?.aberto ? "bg-emerald-50" : "bg-surface-border-light"}`}>
+              {caixa?.aberto ? <Unlock size={18} className="text-emerald-600" /> : <Lock size={18} className="text-base-muted" />}
+            </div>
+            <div>
+              <p className="text-sm font-bold text-base-primary">
+                Caixa do dia {new Date().toLocaleDateString("pt-BR")}
+              </p>
+              {caixa?.aberto ? (
+                <p className="text-xs text-emerald-600 font-medium">
+                  Aberto · Saldo inicial: R$ {caixa.saldoInicial.toLocaleString("pt-BR")} · Entradas: R$ {caixaMov.totalEntradas.toLocaleString("pt-BR")} · Saídas: R$ {caixaMov.totalSaidas.toLocaleString("pt-BR")} · <span className="font-semibold">Saldo esperado: R$ {caixa.saldoEsperado.toLocaleString("pt-BR")}</span>
+                </p>
+              ) : caixa && !caixa.aberto ? (
+                <p className="text-xs text-base-muted">
+                  Fechado · Final: R$ {caixa.saldoFinal?.toLocaleString("pt-BR")} · Conferido: R$ {caixa.saldoConferido?.toLocaleString("pt-BR")}
+                  {caixa.diferenca !== 0 && <span className={caixa.diferenca > 0 ? " text-emerald-600" : " text-red-500"}> · Diferença: R$ {caixa.diferenca?.toLocaleString("pt-BR")}</span>}
+                </p>
+              ) : (
+                <p className="text-xs text-base-muted">Caixa não aberto hoje</p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {!caixa ? (
+              <button onClick={() => setShowAbrirCaixa(true)} className="text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-2 rounded-lg flex items-center gap-1.5">
+                <Unlock size={13} /> Abrir caixa
+              </button>
+            ) : caixa.aberto ? (
+              <button onClick={() => setShowFecharCaixa(true)} className="text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 px-3 py-2 rounded-lg flex items-center gap-1.5">
+                <Lock size={13} /> Fechar caixa
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Histórico mini */}
+        {caixaHistorico.length > 0 && (
+          <details className="mt-3">
+            <summary className="text-[11px] text-base-muted cursor-pointer hover:text-base-secondary">
+              <Clock size={11} className="inline mr-1" />Histórico ({caixaHistorico.length} dias)
+            </summary>
+            <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+              {caixaHistorico.map((h: any) => (
+                <div key={h.id} className="flex items-center justify-between text-[11px] px-2 py-1 rounded bg-surface-base">
+                  <span className="text-base-secondary">{new Date(h.data).toLocaleDateString("pt-BR")}</span>
+                  <span className="text-base-secondary">Ini: R$ {h.saldoInicial.toLocaleString("pt-BR")}</span>
+                  <span className="text-emerald-600">+R$ {h.totalEntradas.toLocaleString("pt-BR")}</span>
+                  <span className="text-red-500">-R$ {h.totalSaidas.toLocaleString("pt-BR")}</span>
+                  <span className="font-medium text-base-primary">Final: R$ {h.saldoFinal.toLocaleString("pt-BR")}</span>
+                  {h.diferenca != null && h.diferenca !== 0 && (
+                    <span className={h.diferenca > 0 ? "text-emerald-600" : "text-red-500"}>Dif: R$ {h.diferenca.toLocaleString("pt-BR")}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+
+      {/* Modal abrir caixa */}
+      <Modal open={showAbrirCaixa} title="Abrir caixa do dia" onClose={() => setShowAbrirCaixa(false)}>
+        <Field label="Saldo inicial (gaveta)" value={caixaSaldoInicial} onChange={(v) => setCaixaSaldoInicial(v)} placeholder="0,00" />
+        <ModalActions onCancel={() => setShowAbrirCaixa(false)} onSave={abrirCaixa} saving={caixaSaving} saveLabel="Abrir caixa" />
+      </Modal>
+
+      {/* Modal fechar caixa */}
+      <Modal open={showFecharCaixa} title="Fechar caixa do dia" onClose={() => setShowFecharCaixa(false)}>
+        <div className="mb-3 p-3 bg-surface-base rounded-lg text-xs space-y-1">
+          <p>Saldo inicial: <span className="font-semibold">R$ {caixa?.saldoInicial?.toLocaleString("pt-BR") ?? "0"}</span></p>
+          <p>Entradas: <span className="font-semibold text-emerald-600">R$ {caixaMov.totalEntradas.toLocaleString("pt-BR")}</span></p>
+          <p>Saídas: <span className="font-semibold text-red-500">R$ {caixaMov.totalSaidas.toLocaleString("pt-BR")}</span></p>
+          <p className="border-t border-surface-border-light pt-1 mt-1">Saldo esperado: <span className="font-bold">R$ {caixa?.saldoEsperado?.toLocaleString("pt-BR") ?? "0"}</span></p>
+        </div>
+        <Field label="Saldo conferido (contagem de gaveta)" value={caixaSaldoConferido} onChange={(v) => setCaixaSaldoConferido(v)} placeholder="0,00" />
+        <Field label="Observações (opcional)" value={caixaObs} onChange={(v) => setCaixaObs(v)} placeholder="Ex.: troco para amanhã..." />
+        <ModalActions onCancel={() => setShowFecharCaixa(false)} onSave={fecharCaixa} saving={caixaSaving} saveLabel="Fechar caixa" />
+      </Modal>
 
       {/* KPIs */}
       {loading ? (
@@ -394,6 +530,47 @@ export default function FinanceiroPage() {
           )}
         </div>
       </div>
+
+      {/* Margem real por serviço */}
+      {!loading && (data?.margemPorServico ?? []).some((s) => s.custoInsumos > 0) && (
+        <div className="glass-card rounded-2xl p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <PiggyBank size={16} className="text-emerald-500" />
+            <h3 className="text-sm font-bold text-base-primary">Margem real por serviço</h3>
+            {(data?.kpis.cmv ?? 0) > 0 && (
+              <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">CMV mês: R$ {data?.kpis.cmv.toLocaleString("pt-BR")}</span>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-base-muted border-b border-surface-border-light">
+                  <th className="pb-2 font-medium">Serviço</th>
+                  <th className="pb-2 font-medium text-right">Preço</th>
+                  <th className="pb-2 font-medium text-right">Custo insumos</th>
+                  <th className="pb-2 font-medium text-right">Margem</th>
+                  <th className="pb-2 font-medium text-right">%</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-base">
+                {(data?.margemPorServico ?? []).filter((s) => s.custoInsumos > 0).map((s, i) => (
+                  <tr key={i}>
+                    <td className="py-2.5 text-base-primary font-medium">{s.nome}</td>
+                    <td className="py-2.5 text-right text-base-secondary">R$ {s.preco.toLocaleString("pt-BR")}</td>
+                    <td className="py-2.5 text-right text-red-500">R$ {s.custoInsumos.toLocaleString("pt-BR")}</td>
+                    <td className="py-2.5 text-right font-semibold text-emerald-600">R$ {s.margem.toLocaleString("pt-BR")}</td>
+                    <td className="py-2.5 text-right">
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${s.margemPct >= 60 ? "bg-emerald-50 text-emerald-600" : s.margemPct >= 30 ? "bg-amber-50 text-amber-600" : "bg-red-50 text-red-600"}`}>
+                        {s.margemPct}%
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         {/* Commissions by professional */}

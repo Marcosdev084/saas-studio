@@ -279,10 +279,15 @@ export async function PATCH(request: Request) {
 
     const existePagamento = await prisma.pagamento.findUnique({ where: { agendamentoId } })
     if (!existePagamento) {
-      // Forma de pagamento escolhida (com taxa e prazo de recebimento). Sem forma → padrão pago à vista.
-      const forma = formaPagamentoId
+      // Buscar forma de pagamento escolhida; sem escolha → busca "Dinheiro" do estabelecimento
+      let forma = formaPagamentoId
         ? await prisma.formaPagamento.findFirst({ where: { id: formaPagamentoId, estabelecimentoId: usuario.estabelecimentoId } })
         : null
+      if (!forma) {
+        forma = await prisma.formaPagamento.findFirst({
+          where: { estabelecimentoId: usuario.estabelecimentoId, tipo: "DINHEIRO", ativo: true },
+        })
+      }
 
       const valorBruto = Number(agendamento.valorTotal)
       const taxaPct = forma ? Number(forma.taxaPercentual) : 0
@@ -295,7 +300,7 @@ export async function PATCH(request: Request) {
         data: {
           agendamentoId,
           valor: agendamento.valorTotal,
-          tipoPagamento: forma ? forma.tipo : "PIX",
+          tipoPagamento: forma?.tipo ?? "DINHEIRO",
           formaPagamentoId: forma?.id ?? null,
           taxaValor: taxaValor > 0 ? taxaValor : null,
           valorLiquido,
@@ -304,7 +309,6 @@ export async function PATCH(request: Request) {
         },
       })
 
-      // Receita bruta reconhecida no atendimento
       await prisma.transacao.create({
         data: {
           estabelecimentoId: usuario.estabelecimentoId,
@@ -315,7 +319,6 @@ export async function PATCH(request: Request) {
         },
       })
 
-      // Taxa da maquininha/gateway entra como despesa
       if (taxaValor > 0) {
         await prisma.transacao.create({
           data: {
@@ -328,20 +331,31 @@ export async function PATCH(request: Request) {
         })
       }
 
-      // Recebimento futuro (ex.: cartão de crédito D+30) vira Conta a Receber
+      // Recebimento futuro (cartão D+30, fiado, etc.) → Conta a Receber
       if (!aVista) {
         const dataPrevista = new Date()
         dataPrevista.setDate(dataPrevista.getDate() + dias)
+
+        const TIPO_TO_ORIGEM: Record<string, string> = {
+          CREDITO: "CARTAO",
+          DEBITO: "CARTAO",
+          FIADO: "FIADO",
+          VOUCHER: "OUTRO",
+          PIX: "OUTRO",
+          DINHEIRO: "OUTRO",
+        }
+        const origem = forma?.tipo ? (TIPO_TO_ORIGEM[forma.tipo] ?? "OUTRO") : "OUTRO"
+
         await prisma.contaReceber.create({
           data: {
             estabelecimentoId: usuario.estabelecimentoId,
             clienteId: agendamento.clienteId,
             pagamentoId: pagamento.id,
-            descricao: `${forma?.nome ?? "Cartão"} - ${atualizado.cliente.nome}`,
+            descricao: `${forma?.nome ?? "Pagamento"} - ${atualizado.cliente.nome}`,
             valor: valorBruto,
             valorLiquido,
             dataPrevista,
-            origem: "CARTAO",
+            origem: origem as any,
             status: "PENDENTE",
           },
         })
@@ -364,6 +378,45 @@ export async function PATCH(request: Request) {
             valorBase: agendamento.valorTotal,
             percentual: pct,
             valorComissao,
+          },
+        })
+      }
+    }
+
+    // Baixa automática de estoque: desconta insumos vinculados a cada serviço prestado
+    const servicosAgend = await prisma.agendamentoServico.findMany({
+      where: { agendamentoId },
+      select: { servicoId: true },
+    })
+    for (const sa of servicosAgend) {
+      const insumos = await prisma.servicoInsumo.findMany({
+        where: { servicoId: sa.servicoId },
+        include: { produto: { select: { id: true, quantidade: true, custoUnitario: true, nome: true, unidadeConsumo: true, capacidadePorUnidade: true } } },
+      })
+      for (const insumo of insumos) {
+        const quantidadeUsada = Number(insumo.quantidadeUsada)
+        if (quantidadeUsada <= 0) continue
+
+        const capacidade = insumo.produto.capacidadePorUnidade ? Number(insumo.produto.capacidadePorUnidade) : null
+        // Converte consumo para fração de unidade de estoque
+        // Ex: 50ml usados / 500ml por frasco = 0.1 frascos
+        const qtdEstoque = capacidade && capacidade > 0
+          ? Math.round((quantidadeUsada / capacidade) * 1000) / 1000
+          : quantidadeUsada
+
+        await prisma.produto.update({
+          where: { id: insumo.produtoId },
+          data: { quantidade: { decrement: qtdEstoque } },
+        })
+
+        await prisma.movimentacaoEstoque.create({
+          data: {
+            estabelecimentoId: usuario.estabelecimentoId,
+            produtoId: insumo.produtoId,
+            tipo: "SAIDA",
+            quantidade: qtdEstoque,
+            custoUnitario: insumo.produto.custoUnitario,
+            observacao: `Consumo automático - ${atualizado.cliente.nome}${capacidade ? ` (${quantidadeUsada}${insumo.produto.unidadeConsumo ?? ""})` : ""}`,
           },
         })
       }

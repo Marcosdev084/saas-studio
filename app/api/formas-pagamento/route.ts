@@ -8,6 +8,7 @@ const PADROES = [
   { nome: "Pix", tipo: "PIX" as const, taxaPercentual: 0, diasRecebimento: 0 },
   { nome: "Cartão de débito", tipo: "DEBITO" as const, taxaPercentual: 2.0, diasRecebimento: 1 },
   { nome: "Cartão de crédito", tipo: "CREDITO" as const, taxaPercentual: 3.5, diasRecebimento: 30 },
+  { nome: "Fiado", tipo: "FIADO" as const, taxaPercentual: 0, diasRecebimento: 30 },
 ]
 
 // GET — lista as formas de pagamento (cria as padrão na primeira vez)
@@ -55,7 +56,7 @@ export async function PUT(request: Request) {
   }
   if (!formas || !Array.isArray(formas)) return NextResponse.json({ error: "Dados inválidos" }, { status: 400 })
 
-  const tiposValidos = ["DINHEIRO", "PIX", "CREDITO", "DEBITO", "VOUCHER"]
+  const tiposValidos = ["DINHEIRO", "PIX", "CREDITO", "DEBITO", "VOUCHER", "FIADO"]
 
   for (const f of formas) {
     if (!f.nome?.trim() || !tiposValidos.includes(f.tipo)) continue

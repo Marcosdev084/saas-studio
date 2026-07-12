@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import {
   Building2, Scissors, Clock, BellRing, CreditCard, Shield, Globe,
   Plus, MoreVertical, Check, Palette, Sun, Moon, Link2, Copy, ExternalLink, Share2,
-  Pencil, Trash2
+  Pencil, Trash2, Package, X
 } from "lucide-react"
 import { Modal, Field, SelectField, MaskedField, ModalActions, ConfirmDialog } from "@/components/ui/modal"
 import { useToast } from "@/components/ui/toast"
@@ -49,6 +49,62 @@ export default function ConfiguracoesPage() {
   const [menuServicoId, setMenuServicoId] = useState<string | null>(null)
   const [confirmDelServico, setConfirmDelServico] = useState<{ id: string; nome: string } | null>(null)
   const [savingNotifs, setSavingNotifs] = useState(false)
+
+  // Insumos
+  const [insumosServicoId, setInsumosServicoId] = useState<string | null>(null)
+  const [insumosServicoNome, setInsumosServicoNome] = useState("")
+  const [insumos, setInsumos] = useState<{ id?: string; produtoId: string; produtoNome: string; unidade: string; unidadeConsumo: string | null; capacidadePorUnidade: number | null; custoUnitario: number; quantidadeUsada: string; estoqueAtual: number }[]>([])
+  const [insumoCustoTotal, setInsumoCustoTotal] = useState(0)
+  const [produtos, setProdutos] = useState<{ id: string; nome: string; unidade: string; unidadeConsumo: string | null; capacidadePorUnidade: number | null; custoUnitario: number; quantidade: number }[]>([])
+  const [savingInsumos, setSavingInsumos] = useState(false)
+  const [loadingInsumos, setLoadingInsumos] = useState(false)
+
+  const abrirInsumos = async (servicoId: string, servicoNome: string) => {
+    setInsumosServicoId(servicoId)
+    setInsumosServicoNome(servicoNome)
+    setLoadingInsumos(true)
+    try {
+      const [insRes, prodRes] = await Promise.all([
+        fetch(`/api/servicos/insumos?servicoId=${servicoId}`).then((r) => r.json()),
+        fetch("/api/estoque").then((r) => r.json()),
+      ])
+      setInsumos((insRes.insumos ?? []).map((i: any) => ({
+        id: i.id, produtoId: i.produtoId, produtoNome: i.produtoNome, unidade: i.unidade,
+        unidadeConsumo: i.unidadeConsumo ?? null, capacidadePorUnidade: i.capacidadePorUnidade ?? null,
+        custoUnitario: i.custoUnitario, quantidadeUsada: String(i.quantidadeUsada), estoqueAtual: i.estoqueAtual,
+      })))
+      setInsumoCustoTotal(insRes.custoTotal ?? 0)
+      setProdutos((prodRes.produtos ?? []).map((p: any) => ({
+        id: p.id, nome: p.nome, unidade: p.unidade, unidadeConsumo: p.unidadeConsumo ?? null,
+        capacidadePorUnidade: p.capacidadePorUnidade ?? null, custoUnitario: Number(p.custoUnitario), quantidade: p.quantidade,
+      })))
+    } catch {}
+    setLoadingInsumos(false)
+  }
+
+  const adicionarInsumo = () => {
+    const disponiveis = produtos.filter((p) => !insumos.some((i) => i.produtoId === p.id))
+    if (disponiveis.length === 0) return
+    const p = disponiveis[0]
+    setInsumos([...insumos, { produtoId: p.id, produtoNome: p.nome, unidade: p.unidade, unidadeConsumo: p.unidadeConsumo, capacidadePorUnidade: p.capacidadePorUnidade, custoUnitario: p.custoUnitario, quantidadeUsada: "1", estoqueAtual: p.quantidade }])
+  }
+
+  const salvarInsumos = async () => {
+    if (!insumosServicoId) return
+    setSavingInsumos(true)
+    await fetch("/api/servicos/insumos", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        servicoId: insumosServicoId,
+        insumos: insumos.map((i) => ({ produtoId: i.produtoId, quantidadeUsada: parseFloat(i.quantidadeUsada.replace(",", ".")) || 0 })),
+      }),
+    })
+    setSavingInsumos(false)
+    setInsumosServicoId(null)
+    toast("Insumos do serviço atualizados")
+  }
+
   const { toast } = useToast()
   const theme = useTheme()
 
@@ -289,6 +345,7 @@ export default function ConfiguracoesPage() {
                       {menuServicoId === s.id && (
                         <div className="absolute right-0 top-full mt-1 glass-card rounded-lg shadow-lg z-10 py-1 w-36">
                           <button onClick={() => { setEditServico(s); setMenuServicoId(null) }} className="w-full text-left px-3 py-2 text-sm text-base-secondary hover:bg-surface-base flex items-center gap-2"><Pencil size={13} /> Editar</button>
+                          <button onClick={() => { abrirInsumos(s.id, s.nome); setMenuServicoId(null) }} className="w-full text-left px-3 py-2 text-sm text-base-secondary hover:bg-surface-base flex items-center gap-2"><Package size={13} /> Insumos</button>
                           <button onClick={() => { setConfirmDelServico({ id: s.id, nome: s.nome }); setMenuServicoId(null) }} className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"><Trash2 size={13} /> Remover</button>
                         </div>
                       )}
@@ -608,6 +665,93 @@ export default function ConfiguracoesPage() {
         onClose={() => setConfirmDelServico(null)}
         onConfirm={() => confirmDelServico && deleteServico(confirmDelServico.id)}
       />
+
+      {/* Modal de insumos do serviço */}
+      <Modal open={!!insumosServicoId} onClose={() => setInsumosServicoId(null)} title={`Insumos — ${insumosServicoNome}`} wide>
+        {loadingInsumos ? (
+          <div className="space-y-3 animate-pulse">
+            {[1, 2, 3].map((i) => <div key={i} className="h-10 bg-surface-border-light rounded" />)}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-xs text-base-muted">Defina quais produtos são consumidos a cada atendimento deste serviço. O estoque será descontado automaticamente ao concluir.</p>
+
+            {insumos.length > 0 ? (
+              <div className="space-y-2">
+                {insumos.map((ins, idx) => (
+                  <div key={idx} className="flex items-center gap-2 p-3 rounded-lg border border-surface-border-light">
+                    <div className="flex-1 min-w-0">
+                      <select
+                        value={ins.produtoId}
+                        onChange={(e) => {
+                          const p = produtos.find((pr) => pr.id === e.target.value)
+                          if (!p) return
+                          const updated = [...insumos]
+                          updated[idx] = { ...updated[idx], produtoId: p.id, produtoNome: p.nome, unidade: p.unidade, unidadeConsumo: p.unidadeConsumo, capacidadePorUnidade: p.capacidadePorUnidade, custoUnitario: p.custoUnitario, estoqueAtual: p.quantidade }
+                          setInsumos(updated)
+                        }}
+                        className="w-full text-sm border border-surface-border rounded-lg px-2.5 py-2 bg-surface-card text-base-primary focus:outline-none focus:ring-2 focus:ring-accent-400/30"
+                      >
+                        {produtos.map((p) => (
+                          <option key={p.id} value={p.id} disabled={insumos.some((i, ii) => i.produtoId === p.id && ii !== idx)}>
+                            {p.nome} ({p.unidadeConsumo ? `${p.unidadeConsumo} · ${p.capacidadePorUnidade}${p.unidadeConsumo}/${p.unidade}` : p.unidade})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="w-28">
+                      <input
+                        type="text"
+                        value={ins.quantidadeUsada}
+                        onChange={(e) => { const updated = [...insumos]; updated[idx] = { ...updated[idx], quantidadeUsada: e.target.value }; setInsumos(updated) }}
+                        className="w-full text-sm text-center border border-surface-border rounded-lg px-2 py-2 bg-surface-card text-base-primary focus:outline-none focus:ring-2 focus:ring-accent-400/30"
+                        placeholder={ins.unidadeConsumo || ins.unidade}
+                      />
+                      <p className="text-[10px] text-center text-base-muted mt-0.5">{ins.unidadeConsumo || ins.unidade}</p>
+                    </div>
+                    <div className="w-20 text-right">
+                      <p className="text-xs text-base-muted">R$ {(() => {
+                        const qtd = parseFloat(ins.quantidadeUsada.replace(",", ".")) || 0
+                        const cap = ins.capacidadePorUnidade
+                        if (cap && cap > 0) return ((qtd / cap) * ins.custoUnitario).toFixed(2)
+                        return (qtd * ins.custoUnitario).toFixed(2)
+                      })()}</p>
+                    </div>
+                    <button onClick={() => setInsumos(insumos.filter((_, i) => i !== idx))} className="p-1.5 rounded-lg hover:bg-red-50 text-base-muted hover:text-red-500">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between pt-2 border-t border-surface-border-light">
+                  <span className="text-xs font-medium text-base-secondary">Custo total por atendimento</span>
+                  <span className="text-sm font-bold text-accent-700">
+                    R$ {insumos.reduce((sum, i) => {
+                      const qtd = parseFloat(i.quantidadeUsada.replace(",", ".")) || 0
+                      const cap = i.capacidadePorUnidade
+                      if (cap && cap > 0) return sum + (qtd / cap) * i.custoUnitario
+                      return sum + qtd * i.custoUnitario
+                    }, 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-base-muted/60">
+                <Package size={28} className="mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Nenhum insumo vinculado</p>
+                <p className="text-[10px] mt-1">Adicione produtos consumidos neste serviço</p>
+              </div>
+            )}
+
+            {produtos.filter((p) => !insumos.some((i) => i.produtoId === p.id)).length > 0 && (
+              <button onClick={adicionarInsumo} className="text-xs font-medium text-accent-600 hover:text-accent-700 flex items-center gap-1">
+                <Plus size={13} /> Adicionar insumo
+              </button>
+            )}
+
+            <ModalActions onCancel={() => setInsumosServicoId(null)} onSave={salvarInsumos} saving={savingInsumos} saveLabel="Salvar insumos" />
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

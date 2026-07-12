@@ -23,6 +23,8 @@ export async function GET() {
       categoria: p.categoria,
       sku: p.sku,
       unidade: p.unidade,
+      unidadeConsumo: p.unidadeConsumo ?? null,
+      capacidadePorUnidade: p.capacidadePorUnidade != null ? Number(p.capacidadePorUnidade) : null,
       quantidade: p.quantidade,
       estoqueMinimo: p.estoqueMinimo,
       custoUnitario: custo,
@@ -69,13 +71,14 @@ export async function POST(request: Request) {
   let body: any
   try { body = await request.json() } catch { return NextResponse.json({ error: "JSON inválido" }, { status: 400 }) }
 
-  const { nome, descricao, categoria, sku, unidade, estoqueMinimo, custoUnitario, precoVenda, quantidadeInicial } = body
+  const { nome, descricao, categoria, sku, unidade, estoqueMinimo, custoUnitario, precoVenda, quantidadeInicial, unidadeConsumo, capacidadePorUnidade } = body
   if (!nome?.trim()) return NextResponse.json({ error: "Nome é obrigatório" }, { status: 400 })
 
   const custo = custoUnitario != null && !isNaN(Number(custoUnitario)) ? Number(custoUnitario) : 0
   const preco = precoVenda != null && precoVenda !== "" && !isNaN(Number(precoVenda)) ? Number(precoVenda) : null
   const minimo = estoqueMinimo != null && !isNaN(Number(estoqueMinimo)) ? Math.max(0, Math.round(Number(estoqueMinimo))) : 0
   const qtdInicial = quantidadeInicial != null && !isNaN(Number(quantidadeInicial)) ? Math.max(0, Math.round(Number(quantidadeInicial))) : 0
+  const capUnidade = capacidadePorUnidade != null && capacidadePorUnidade !== "" && !isNaN(Number(capacidadePorUnidade)) ? Number(capacidadePorUnidade) : null
 
   const produto = await prisma.produto.create({
     data: {
@@ -85,6 +88,8 @@ export async function POST(request: Request) {
       categoria: categoria?.trim() || null,
       sku: sku?.trim() || null,
       unidade: (unidade?.trim() || "un"),
+      unidadeConsumo: unidadeConsumo?.trim() || null,
+      capacidadePorUnidade: capUnidade,
       estoqueMinimo: minimo,
       custoUnitario: custo,
       precoVenda: preco,
@@ -132,6 +137,8 @@ export async function PATCH(request: Request) {
       ...(body.categoria !== undefined && { categoria: body.categoria?.trim() || null }),
       ...(body.sku !== undefined && { sku: body.sku?.trim() || null }),
       ...(body.unidade !== undefined && { unidade: body.unidade?.trim() || "un" }),
+      ...(body.unidadeConsumo !== undefined && { unidadeConsumo: body.unidadeConsumo?.trim() || null }),
+      ...(body.capacidadePorUnidade !== undefined && { capacidadePorUnidade: body.capacidadePorUnidade === "" || body.capacidadePorUnidade == null ? null : Number(body.capacidadePorUnidade) }),
       ...(body.estoqueMinimo !== undefined && { estoqueMinimo: Math.max(0, Math.round(Number(body.estoqueMinimo) || 0)) }),
       ...(body.custoUnitario !== undefined && { custoUnitario: Number(body.custoUnitario) || 0 }),
       ...(body.precoVenda !== undefined && { precoVenda: body.precoVenda === "" || body.precoVenda == null ? null : Number(body.precoVenda) }),

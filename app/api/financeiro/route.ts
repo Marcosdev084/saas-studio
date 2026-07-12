@@ -59,9 +59,21 @@ export async function GET(request: Request) {
   const despesasAgg = await prisma.transacao.aggregate({ where: { estabelecimentoId: estabId, tipo: "DESPESA" }, _sum: { valor: true } })
   const totalDespesas = Number(despesasAgg._sum.valor ?? 0)
 
-  const servicos = await prisma.servico.findMany({ where: { estabelecimentoId: estabId, ativo: true }, select: { nome: true, preco: true, profissionais: { select: { profissional: { select: { totalAtendimentos: true } } } } }, orderBy: { preco: "desc" } })
   const cores = ["#105a73", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#94A3B8"]
-  const receitaPorServico = servicos.map((s, i) => ({ nome: s.nome, valor: Math.round(Number(s.preco) * (s.profissionais.length > 0 ? s.profissionais.length * 4 : 1)), cor: cores[i % cores.length] })).sort((a, b) => b.valor - a.valor).slice(0, 6)
+  const agendServicos = await prisma.agendamentoServico.findMany({
+    where: { agendamento: { estabelecimentoId: estabId, status: "CONCLUIDO" } },
+    select: { servicoId: true, preco: true, servico: { select: { nome: true } } },
+  })
+  const receitaPorServicoMap: Record<string, { nome: string; valor: number }> = {}
+  for (const as of agendServicos) {
+    const entry = receitaPorServicoMap[as.servicoId] ?? { nome: as.servico.nome, valor: 0 }
+    entry.valor += Number(as.preco)
+    receitaPorServicoMap[as.servicoId] = entry
+  }
+  const receitaPorServico = Object.values(receitaPorServicoMap)
+    .sort((a, b) => b.valor - a.valor)
+    .slice(0, 6)
+    .map((s, i) => ({ ...s, cor: cores[i % cores.length] }))
   const totalServicos = receitaPorServico.reduce((a, s) => a + s.valor, 0)
   const receitaPorServicoComPct = receitaPorServico.map((s) => ({ ...s, pct: totalServicos > 0 ? Math.round((s.valor / totalServicos) * 100) : 0 }))
 
@@ -118,9 +130,46 @@ export async function GET(request: Request) {
     select: { id: true, descricao: true, valor: true, categoria: true, diaVencimento: true, pagoEm: true, ativo: true, ultimoRegistro: true, criadoEm: true },
   })
 
+  // CMV: custo dos insumos consumidos em atendimentos concluídos no mês atual
+  const inicioMesAtual = new Date(); inicioMesAtual.setDate(1); inicioMesAtual.setHours(0, 0, 0, 0)
+  const fimMesAtual = new Date(inicioMesAtual.getFullYear(), inicioMesAtual.getMonth() + 1, 1)
+  const cmvSaidas = await prisma.movimentacaoEstoque.findMany({
+    where: { estabelecimentoId: estabId, tipo: "SAIDA", criadoEm: { gte: inicioMesAtual, lt: fimMesAtual } },
+    select: { quantidade: true, custoUnitario: true },
+  })
+  const cmvTotal = cmvSaidas.reduce((sum, m) => sum + m.quantidade * Number(m.custoUnitario ?? 0), 0)
+
+  // Margem real por serviço: receita real - custo de insumos
+  const servicosComInsumo = await prisma.servico.findMany({
+    where: { estabelecimentoId: estabId, ativo: true },
+    select: {
+      id: true, nome: true, preco: true,
+      insumos: { include: { produto: { select: { custoUnitario: true, capacidadePorUnidade: true } } } },
+    },
+  })
+  const margemPorServico = servicosComInsumo.map((s) => {
+    const custoInsumos = s.insumos.reduce((sum, i) => {
+      const qtd = Number(i.quantidadeUsada)
+      const custoUnit = Number(i.produto.custoUnitario)
+      const cap = i.produto.capacidadePorUnidade ? Number(i.produto.capacidadePorUnidade) : null
+      if (cap && cap > 0) return sum + (qtd / cap) * custoUnit
+      return sum + qtd * custoUnit
+    }, 0)
+    const preco = Number(s.preco)
+    const margem = preco - custoInsumos
+    return {
+      nome: s.nome,
+      preco,
+      custoInsumos: Math.round(custoInsumos * 100) / 100,
+      margem: Math.round(margem * 100) / 100,
+      margemPct: preco > 0 ? Math.round((margem / preco) * 100) : 0,
+    }
+  }).sort((a, b) => b.margem - a.margem)
+
   return NextResponse.json({
-    kpis: { receita: totalReceita, despesas: totalDespesas, lucro: totalReceita - totalDespesas, comissoes: totalComissoes },
+    kpis: { receita: totalReceita, despesas: totalDespesas, lucro: totalReceita - totalDespesas, comissoes: totalComissoes, cmv: Math.round(cmvTotal * 100) / 100 },
     receitaPorProf, receitaPorServico: receitaPorServicoComPct, projecao, totalProjecao, evolucao, despesasRecentes, recorrentes,
+    margemPorServico,
   })
 }
 

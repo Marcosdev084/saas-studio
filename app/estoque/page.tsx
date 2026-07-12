@@ -10,7 +10,8 @@ import { useToast } from "@/components/ui/toast"
 
 interface Produto {
   id: string; nome: string; descricao: string | null; categoria: string | null; sku: string | null
-  unidade: string; quantidade: number; estoqueMinimo: number; custoUnitario: number
+  unidade: string; unidadeConsumo: string | null; capacidadePorUnidade: number | null
+  quantidade: number; estoqueMinimo: number; custoUnitario: number
   precoVenda: number | null; valorEmEstoque: number; baixo: boolean
 }
 interface Movimentacao {
@@ -26,7 +27,8 @@ const movStyle: Record<string, { bg: string; text: string; label: string; icon: 
   AJUSTE: { bg: "bg-sky-50", text: "text-sky-700", label: "Ajuste", icon: SlidersHorizontal },
 }
 const unidades = ["un", "ml", "L", "g", "kg", "cx", "par", "kit"]
-const emptyProd = { nome: "", categoria: "", sku: "", unidade: "un", estoqueMinimo: "0", custoUnitario: "", precoVenda: "", quantidadeInicial: "0" }
+const unidadesConsumo = ["", "ml", "g", "gotas", "doses"]
+const emptyProd = { nome: "", categoria: "", sku: "", unidade: "un", estoqueMinimo: "0", custoUnitario: "", precoVenda: "", quantidadeInicial: "0", unidadeConsumo: "", capacidadePorUnidade: "" }
 
 function fmt(v: number) { return `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
 
@@ -65,6 +67,7 @@ export default function EstoquePage() {
       nome: p.nome, categoria: p.categoria ?? "", sku: p.sku ?? "", unidade: p.unidade,
       estoqueMinimo: String(p.estoqueMinimo), custoUnitario: String(p.custoUnitario),
       precoVenda: p.precoVenda != null ? String(p.precoVenda) : "", quantidadeInicial: "0",
+      unidadeConsumo: p.unidadeConsumo ?? "", capacidadePorUnidade: p.capacidadePorUnidade != null ? String(p.capacidadePorUnidade) : "",
     })
     setProdErr(""); setShowProd(true)
   }
@@ -205,6 +208,9 @@ export default function EstoquePage() {
                       <td className="px-4 py-3 text-center">
                         <span className={`font-semibold ${p.baixo ? "text-red-500" : "text-base-primary"}`}>{p.quantidade}</span>
                         <span className="text-[10px] text-base-muted"> {p.unidade}</span>
+                        {p.unidadeConsumo && p.capacidadePorUnidade && (
+                          <div className="text-[10px] text-accent-600">{p.capacidadePorUnidade}{p.unidadeConsumo}/{p.unidade}</div>
+                        )}
                         <div className="text-[10px] text-base-muted">mín. {p.estoqueMinimo}</div>
                       </td>
                       <td className="px-4 py-3 text-right text-base-secondary">{fmt(p.custoUnitario)}</td>
@@ -277,9 +283,16 @@ export default function EstoquePage() {
             <Field label="SKU / código" value={prodForm.sku} onChange={(v) => setProdForm({ ...prodForm, sku: v })} placeholder="opcional" />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <SelectField label="Unidade" value={prodForm.unidade} onChange={(v) => setProdForm({ ...prodForm, unidade: v })} options={unidades.map((u) => ({ value: u, label: u }))} />
+            <SelectField label="Unidade de estoque" value={prodForm.unidade} onChange={(v) => setProdForm({ ...prodForm, unidade: v })} options={unidades.map((u) => ({ value: u, label: u }))} />
             <Field label="Estoque mínimo" type="number" value={prodForm.estoqueMinimo} onChange={(v) => setProdForm({ ...prodForm, estoqueMinimo: v })} placeholder="0" />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <SelectField label="Unidade de consumo" value={prodForm.unidadeConsumo} onChange={(v) => setProdForm({ ...prodForm, unidadeConsumo: v })} options={unidadesConsumo.map((u) => ({ value: u, label: u || "— Nenhuma —" }))} />
+            <Field label={`Capacidade por ${prodForm.unidade || "un"}`} type="number" value={prodForm.capacidadePorUnidade} onChange={(v) => setProdForm({ ...prodForm, capacidadePorUnidade: v })} placeholder={prodForm.unidadeConsumo ? `Ex: 500 ${prodForm.unidadeConsumo}` : "—"} />
+          </div>
+          {prodForm.unidadeConsumo && prodForm.capacidadePorUnidade && (
+            <p className="text-[10px] text-base-muted -mt-2">Cada {prodForm.unidade || "un"} contém {prodForm.capacidadePorUnidade} {prodForm.unidadeConsumo}. O consumo nos serviços será em {prodForm.unidadeConsumo}.</p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Custo unitário (R$)" type="number" value={prodForm.custoUnitario} onChange={(v) => setProdForm({ ...prodForm, custoUnitario: v })} placeholder="0,00" />
             <Field label="Preço de venda (R$)" type="number" value={prodForm.precoVenda} onChange={(v) => setProdForm({ ...prodForm, precoVenda: v })} placeholder="opcional" />

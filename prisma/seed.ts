@@ -39,7 +39,7 @@ async function main() {
       estabelecimentoId: estab.id,
       auth0Id: "auth0|admin_placeholder",
       nome: "Dailton Lima",
-      email: "dailton@studiobeleza.com",
+      email: "dailtondropbox@gmail.com",
       telefone: "(84) 99999-0000",
       permissao: "ADMIN",
     },
