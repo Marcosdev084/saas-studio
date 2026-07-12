@@ -1,0 +1,710 @@
+// ─────────────────────────────────────────────────────────────────
+//  PRISMA SCHEMA — SaaS Studio
+//  Gerado em: Junho 2026
+// ─────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ENUMS
+// ═══════════════════════════════════════════════════════════════════
+
+enum TipoNegocio {
+  SALAO_BELEZA
+  BARBEARIA
+  CLINICA_ESTETICA
+  CLINICA_ODONTO
+  ESPACO_BELEZA
+  OUTRO
+}
+
+enum PlanoAssinatura {
+  STARTER
+  PRO
+  STUDIO
+  CLINICA
+}
+
+enum StatusAssinatura {
+  ATIVA
+  CANCELADA
+  INADIMPLENTE
+  TRIAL
+}
+
+enum StatusAgendamento {
+  PENDENTE
+  CONFIRMADO
+  ATENDENDO
+  CONCLUIDO
+  CANCELADO
+  NO_SHOW
+}
+
+enum TipoPagamento {
+  DINHEIRO
+  PIX
+  CREDITO
+  DEBITO
+  VOUCHER
+}
+
+enum StatusPagamento {
+  PENDENTE
+  PAGO
+  CANCELADO
+  ESTORNADO
+}
+
+enum NivelPermissao {
+  ADMIN
+  GERENTE
+  PROFISSIONAL
+  RECEPCIONISTA
+}
+
+enum TipoSugestaoIA {
+  RETENCAO
+  OPORTUNIDADE
+  INSIGHT
+  ALERTA
+}
+
+enum StatusSugestaoIA {
+  PENDENTE
+  EXECUTADA
+  IGNORADA
+}
+
+enum PrioridadeSugestao {
+  ALTA
+  MEDIA
+  BAIXA
+}
+
+enum RiscoChurn {
+  CRITICO
+  ALTO
+  MEDIO
+  BAIXO
+}
+
+enum NivelFidelidade {
+  PRATA
+  OURO
+  PLATINA
+}
+
+enum StatusCampanha {
+  RASCUNHO
+  ATIVA
+  PAUSADA
+  CONCLUIDA
+  CANCELADA
+}
+
+enum CanalCampanha {
+  WHATSAPP
+  EMAIL
+  SMS
+}
+
+enum TipoTransacao {
+  RECEITA
+  DESPESA
+  COMISSAO
+  ESTORNO
+}
+
+enum TipoMovEstoque {
+  ENTRADA
+  SAIDA
+  AJUSTE
+}
+
+enum OrigemReceber {
+  CARTAO
+  FIADO
+  PACOTE
+  ASSINATURA
+  OUTRO
+}
+
+enum StatusReceber {
+  PENDENTE
+  RECEBIDO
+  VENCIDO
+  CANCELADO
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  MULTI-TENANCY — ESTABELECIMENTO
+// ═══════════════════════════════════════════════════════════════════
+
+model Estabelecimento {
+  id              String           @id @default(cuid())
+  nome            String
+  cnpj            String?          @unique
+  telefone        String?
+  email           String           @unique
+  endereco        String?
+  cidade          String?
+  estado          String?
+  cep             String?
+  tipoNegocio     TipoNegocio      @default(SALAO_BELEZA)
+  logoUrl         String?
+  ativo           Boolean          @default(true)
+  criadoEm       DateTime         @default(now())
+  atualizadoEm   DateTime         @updatedAt
+
+  // Relações
+  assinatura      Assinatura?
+  usuarios        Usuario[]
+  profissionais   Profissional[]
+  servicos        Servico[]
+  clientes        Cliente[]
+  agendamentos    Agendamento[]
+  transacoes      Transacao[]
+  campanhas       Campanha[]
+  sugestoesIA     SugestaoIA[]
+  configHorarios  ConfigHorario[]
+  nivelFidelidade    ConfigFidelidade[]
+  despesasRecorrentes DespesaRecorrente[]
+  produtos            Produto[]
+  formasPagamento     FormaPagamento[]
+  contasReceber       ContaReceber[]
+
+  @@map("estabelecimentos")
+}
+
+model Assinatura {
+  id                  String           @id @default(cuid())
+  estabelecimentoId   String           @unique
+  plano               PlanoAssinatura  @default(STARTER)
+  status              StatusAssinatura @default(TRIAL)
+  valorMensal         Decimal          @db.Decimal(10, 2)
+  dataInicio          DateTime         @default(now())
+  dataRenovacao       DateTime?
+  dataCancelamento    DateTime?
+  stripeCustomerId    String?
+  stripeSubscriptionId String?
+  criadoEm           DateTime         @default(now())
+  atualizadoEm       DateTime         @updatedAt
+
+  estabelecimento     Estabelecimento  @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+
+  @@map("assinaturas")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  USUÁRIOS E AUTENTICAÇÃO
+// ═══════════════════════════════════════════════════════════════════
+
+model Usuario {
+  id                String         @id @default(cuid())
+  estabelecimentoId String
+  auth0Id           String         @unique
+  nome              String
+  email             String         @unique
+  telefone          String?
+  avatarUrl         String?
+  permissao         NivelPermissao @default(PROFISSIONAL)
+  ativo             Boolean        @default(true)
+  criadoEm         DateTime       @default(now())
+  atualizadoEm     DateTime       @updatedAt
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  profissional      Profissional?
+
+  @@index([estabelecimentoId])
+  @@map("usuarios")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PROFISSIONAIS
+// ═══════════════════════════════════════════════════════════════════
+
+model Profissional {
+  id                String        @id @default(cuid())
+  estabelecimentoId String
+  usuarioId         String?       @unique
+  nome              String
+  email             String?
+  telefone          String?
+  especialidade     String?
+  bio               String?
+  avatarUrl         String?
+  cor               String?       @default("#0D9488")
+  comissaoPadrao    Decimal       @default(40) @db.Decimal(5, 2)
+  ativo             Boolean       @default(true)
+  criadoEm         DateTime      @default(now())
+  atualizadoEm     DateTime      @updatedAt
+
+  // Campos desnormalizados para performance
+  totalAtendimentos Int           @default(0)
+  receitaTotal      Decimal       @default(0) @db.Decimal(12, 2)
+  avaliacaoMedia    Decimal       @default(0) @db.Decimal(3, 2)
+
+  estabelecimento   Estabelecimento   @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  usuario           Usuario?          @relation(fields: [usuarioId], references: [id])
+  servicos          ProfissionalServico[]
+  agendamentos      Agendamento[]
+  comissoes         Comissao[]
+  configHorarios    ConfigHorario[]
+
+  @@index([estabelecimentoId])
+  @@map("profissionais")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SERVIÇOS
+// ═══════════════════════════════════════════════════════════════════
+
+model Servico {
+  id                String    @id @default(cuid())
+  estabelecimentoId String
+  nome              String
+  descricao         String?
+  categoria         String?
+  duracaoMinutos    Int       @default(60)
+  preco             Decimal   @db.Decimal(10, 2)
+  ativo             Boolean   @default(true)
+  criadoEm         DateTime  @default(now())
+  atualizadoEm     DateTime  @updatedAt
+
+  estabelecimento   Estabelecimento      @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  profissionais     ProfissionalServico[]
+  agendamentos      AgendamentoServico[]
+
+  @@index([estabelecimentoId])
+  @@map("servicos")
+}
+
+model ProfissionalServico {
+  id              String       @id @default(cuid())
+  profissionalId  String
+  servicoId       String
+  precoCustomizado Decimal?    @db.Decimal(10, 2)
+  duracaoCustomizada Int?
+  ativo           Boolean      @default(true)
+
+  profissional    Profissional @relation(fields: [profissionalId], references: [id], onDelete: Cascade)
+  servico         Servico      @relation(fields: [servicoId], references: [id], onDelete: Cascade)
+
+  @@unique([profissionalId, servicoId])
+  @@map("profissional_servicos")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PORTAL DO CLIENTE (AUTENTICAÇÃO)
+// ═══════════════════════════════════════════════════════════════════
+
+model ContaCliente {
+  id          String   @id @default(cuid())
+  nome        String
+  email       String   @unique
+  telefone    String?
+  senhaHash   String
+  ativo       Boolean  @default(true)
+  criadoEm    DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  clientes    Cliente[]
+
+  @@map("contas_cliente")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CLIENTES
+// ═══════════════════════════════════════════════════════════════════
+
+model Cliente {
+  id                String      @id @default(cuid())
+  estabelecimentoId String
+  contaClienteId    String?
+  nome              String
+  email             String?
+  telefone          String?
+  dataNascimento    DateTime?
+  observacoes       String?
+  ativo             Boolean     @default(true)
+  criadoEm         DateTime    @default(now())
+  atualizadoEm     DateTime    @updatedAt
+
+  // Campos desnormalizados para performance
+  totalVisitas      Int         @default(0)
+  ticketMedio       Decimal     @default(0) @db.Decimal(10, 2)
+  totalGasto        Decimal     @default(0) @db.Decimal(12, 2)
+  ultimaVisita      DateTime?
+  diasDesdeUltimaVisita Int?
+  riscoChurn        RiscoChurn  @default(BAIXO)
+  scoreChurn        Int         @default(0)
+
+  estabelecimento   Estabelecimento      @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  contaCliente      ContaCliente?        @relation(fields: [contaClienteId], references: [id])
+  agendamentos      Agendamento[]
+  preferencias      PreferenciaCliente[]
+  fidelidade        Fidelidade?
+  campanhasRecebidas CampanhaCliente[]
+  contasReceber     ContaReceber[]
+
+  @@index([estabelecimentoId])
+  @@index([contaClienteId])
+  @@index([riscoChurn])
+  @@map("clientes")
+}
+
+model PreferenciaCliente {
+  id          String   @id @default(cuid())
+  clienteId   String
+  descricao   String
+  criadoEm   DateTime @default(now())
+
+  cliente     Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@index([clienteId])
+  @@map("preferencias_cliente")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  AGENDAMENTOS
+// ═══════════════════════════════════════════════════════════════════
+
+model Agendamento {
+  id                String            @id @default(cuid())
+  estabelecimentoId String
+  clienteId         String
+  profissionalId    String
+  dataHoraInicio    DateTime
+  dataHoraFim       DateTime
+  status            StatusAgendamento @default(PENDENTE)
+  observacoes       String?
+  valorTotal        Decimal           @db.Decimal(10, 2)
+  criadoEm         DateTime          @default(now())
+  atualizadoEm     DateTime          @updatedAt
+
+  estabelecimento   Estabelecimento      @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  cliente           Cliente              @relation(fields: [clienteId], references: [id])
+  profissional      Profissional         @relation(fields: [profissionalId], references: [id])
+  servicos          AgendamentoServico[]
+  pagamento         Pagamento?
+  comissao          Comissao?
+
+  @@index([estabelecimentoId])
+  @@index([profissionalId])
+  @@index([clienteId])
+  @@index([dataHoraInicio])
+  @@index([status])
+  @@map("agendamentos")
+}
+
+model AgendamentoServico {
+  id            String      @id @default(cuid())
+  agendamentoId String
+  servicoId     String
+  preco         Decimal     @db.Decimal(10, 2)
+  duracaoMinutos Int
+
+  agendamento   Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+  servico       Servico     @relation(fields: [servicoId], references: [id])
+
+  @@index([agendamentoId])
+  @@index([servicoId])
+  @@map("agendamento_servicos")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  FINANCEIRO
+// ═══════════════════════════════════════════════════════════════════
+
+model Pagamento {
+  id              String          @id @default(cuid())
+  agendamentoId   String          @unique
+  valor           Decimal         @db.Decimal(10, 2)
+  tipoPagamento   TipoPagamento   @default(PIX)
+  formaPagamentoId String?
+  taxaValor       Decimal?        @db.Decimal(10, 2)
+  valorLiquido    Decimal?        @db.Decimal(10, 2)
+  status          StatusPagamento @default(PENDENTE)
+  pagoEm         DateTime?
+  criadoEm       DateTime        @default(now())
+  atualizadoEm   DateTime        @updatedAt
+
+  agendamento     Agendamento     @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+  formaPagamento  FormaPagamento? @relation(fields: [formaPagamentoId], references: [id])
+  transacao       Transacao?
+  contaReceber    ContaReceber?
+
+  @@map("pagamentos")
+}
+
+model FormaPagamento {
+  id                String        @id @default(cuid())
+  estabelecimentoId String
+  nome              String
+  tipo              TipoPagamento @default(PIX)
+  taxaPercentual    Decimal       @default(0) @db.Decimal(5, 2)
+  diasRecebimento   Int           @default(0)
+  ativo             Boolean       @default(true)
+  criadoEm          DateTime      @default(now())
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  pagamentos        Pagamento[]
+
+  @@index([estabelecimentoId])
+  @@map("formas_pagamento")
+}
+
+model ContaReceber {
+  id                String        @id @default(cuid())
+  estabelecimentoId String
+  clienteId         String?
+  pagamentoId       String?       @unique
+  descricao         String
+  valor             Decimal       @db.Decimal(10, 2)
+  valorLiquido      Decimal       @db.Decimal(10, 2)
+  dataPrevista      DateTime
+  origem            OrigemReceber @default(CARTAO)
+  status            StatusReceber @default(PENDENTE)
+  recebidoEm        DateTime?
+  criadoEm          DateTime      @default(now())
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  cliente           Cliente?        @relation(fields: [clienteId], references: [id])
+  pagamento         Pagamento?      @relation(fields: [pagamentoId], references: [id], onDelete: SetNull)
+
+  @@index([estabelecimentoId])
+  @@index([status])
+  @@map("contas_receber")
+}
+
+model Transacao {
+  id                String        @id @default(cuid())
+  estabelecimentoId String
+  pagamentoId       String?       @unique
+  tipo              TipoTransacao
+  valor             Decimal       @db.Decimal(10, 2)
+  descricao         String
+  categoria         String?
+  dataTransacao     DateTime      @default(now())
+  criadoEm         DateTime      @default(now())
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  pagamento         Pagamento?      @relation(fields: [pagamentoId], references: [id])
+  movimentacaoEstoque MovimentacaoEstoque?
+
+  @@index([estabelecimentoId])
+  @@index([dataTransacao])
+  @@index([tipo])
+  @@map("transacoes")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ESTOQUE
+// ═══════════════════════════════════════════════════════════════════
+
+model Produto {
+  id                String    @id @default(cuid())
+  estabelecimentoId String
+  nome              String
+  descricao         String?
+  categoria         String?
+  sku               String?
+  unidade           String    @default("un")
+  quantidade        Int       @default(0)
+  estoqueMinimo     Int       @default(0)
+  custoUnitario     Decimal   @default(0) @db.Decimal(10, 2)
+  precoVenda        Decimal?  @db.Decimal(10, 2)
+  ativo             Boolean   @default(true)
+  criadoEm          DateTime  @default(now())
+  atualizadoEm      DateTime  @updatedAt
+
+  estabelecimento   Estabelecimento       @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  movimentacoes     MovimentacaoEstoque[]
+
+  @@index([estabelecimentoId])
+  @@map("produtos")
+}
+
+model MovimentacaoEstoque {
+  id                String         @id @default(cuid())
+  estabelecimentoId String
+  produtoId         String
+  tipo              TipoMovEstoque
+  quantidade        Int
+  custoUnitario     Decimal?       @db.Decimal(10, 2)
+  observacao        String?
+  transacaoId       String?        @unique
+  criadoEm          DateTime       @default(now())
+
+  produto           Produto        @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  transacao         Transacao?     @relation(fields: [transacaoId], references: [id], onDelete: SetNull)
+
+  @@index([estabelecimentoId])
+  @@index([produtoId])
+  @@map("movimentacoes_estoque")
+}
+
+model DespesaRecorrente {
+  id                String    @id @default(cuid())
+  estabelecimentoId String
+  descricao         String
+  valor             Decimal   @db.Decimal(10, 2)
+  categoria         String?
+  diaVencimento     Int?
+  pagoEm            DateTime?
+  ativo             Boolean   @default(true)
+  ultimoRegistro    DateTime?
+  criadoEm          DateTime  @default(now())
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+
+  @@index([estabelecimentoId])
+  @@map("despesas_recorrentes")
+}
+
+model Comissao {
+  id              String      @id @default(cuid())
+  agendamentoId   String      @unique
+  profissionalId  String
+  valorBase       Decimal     @db.Decimal(10, 2)
+  percentual      Decimal     @db.Decimal(5, 2)
+  valorComissao   Decimal     @db.Decimal(10, 2)
+  pago            Boolean     @default(false)
+  pagoEm         DateTime?
+  criadoEm       DateTime    @default(now())
+
+  agendamento     Agendamento  @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+  profissional    Profissional @relation(fields: [profissionalId], references: [id])
+
+  @@index([profissionalId])
+  @@index([pago])
+  @@map("comissoes")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  RETENÇÃO E FIDELIDADE
+// ═══════════════════════════════════════════════════════════════════
+
+model Fidelidade {
+  id          String          @id @default(cuid())
+  clienteId   String          @unique
+  pontos      Int             @default(0)
+  nivel       NivelFidelidade @default(PRATA)
+  criadoEm   DateTime        @default(now())
+  atualizadoEm DateTime      @updatedAt
+
+  cliente     Cliente         @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@map("fidelidade")
+}
+
+model ConfigFidelidade {
+  id                String          @id @default(cuid())
+  estabelecimentoId String
+  nivel             NivelFidelidade
+  pontosMinimos     Int
+  descricaoBeneficio String
+  percentualDesconto Decimal?       @db.Decimal(5, 2)
+  ativo             Boolean         @default(true)
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+
+  @@unique([estabelecimentoId, nivel])
+  @@map("config_fidelidade")
+}
+
+model Campanha {
+  id                String         @id @default(cuid())
+  estabelecimentoId String
+  nome              String
+  descricao         String?
+  status            StatusCampanha @default(RASCUNHO)
+  canal             CanalCampanha  @default(WHATSAPP)
+  mensagem          String
+  dataEnvio         DateTime?
+  criadoEm         DateTime       @default(now())
+  atualizadoEm     DateTime       @updatedAt
+
+  // Métricas
+  totalEnviados     Int            @default(0)
+  totalAbertos      Int            @default(0)
+  totalConvertidos  Int            @default(0)
+
+  estabelecimento   Estabelecimento   @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  clientes          CampanhaCliente[]
+
+  @@index([estabelecimentoId])
+  @@map("campanhas")
+}
+
+model CampanhaCliente {
+  id          String    @id @default(cuid())
+  campanhaId  String
+  clienteId   String
+  enviado     Boolean   @default(false)
+  aberto      Boolean   @default(false)
+  convertido  Boolean   @default(false)
+  enviadoEm  DateTime?
+  criadoEm   DateTime  @default(now())
+
+  campanha    Campanha  @relation(fields: [campanhaId], references: [id], onDelete: Cascade)
+  cliente     Cliente   @relation(fields: [clienteId], references: [id])
+
+  @@unique([campanhaId, clienteId])
+  @@map("campanha_clientes")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ASSISTENTE IA
+// ═══════════════════════════════════════════════════════════════════
+
+model SugestaoIA {
+  id                String             @id @default(cuid())
+  estabelecimentoId String
+  tipo              TipoSugestaoIA
+  prioridade        PrioridadeSugestao @default(MEDIA)
+  titulo            String
+  descricao         String
+  acaoSugerida      String
+  status            StatusSugestaoIA   @default(PENDENTE)
+  metadados         Json?
+  expiradoEm       DateTime?
+  executadoEm      DateTime?
+  criadoEm         DateTime           @default(now())
+  atualizadoEm     DateTime           @updatedAt
+
+  estabelecimento   Estabelecimento    @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+
+  @@index([estabelecimentoId])
+  @@index([status])
+  @@index([tipo])
+  @@map("sugestoes_ia")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CONFIGURAÇÕES
+// ═══════════════════════════════════════════════════════════════════
+
+model ConfigHorario {
+  id                String       @id @default(cuid())
+  estabelecimentoId String
+  profissionalId    String?
+  diaSemana         Int          // 0 = domingo, 6 = sábado
+  horaAbertura      String       // "08:00"
+  horaFechamento    String       // "18:00"
+  ativo             Boolean      @default(true)
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  profissional      Profissional?   @relation(fields: [profissionalId], references: [id])
+
+  @@unique([estabelecimentoId, profissionalId, diaSemana])
+  @@map("config_horarios")
+}
