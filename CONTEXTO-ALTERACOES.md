@@ -322,3 +322,118 @@ Isso corrige as movimentações que foram criadas com a lógica antiga e devolve
 - Prisma client precisa ser regenerado após mudanças no schema: `npx prisma generate`
 - Dev server: `npx next dev` (porta 3000)
 - O componente `Modal` exige prop `open={boolean}` e `ModalActions` exige `onCancel/onSave/saving`
+
+---
+---
+
+# 2ª Onda de Features Financeiras — Comissões, Contas a Pagar, Relatórios
+
+Sessão seguinte à correção de CMV/estoque. Foram implementadas 3 features novas e feita a sincronização da página principal do Financeiro com a nova página de Contas a Pagar.
+
+## Feature #5 — Comissões Avançadas (4 modelos)
+
+Antes, a comissão era calculada por uma fórmula estática (`receitaTotal × comissaoPadrao%`). Agora existem 4 modelos por profissional, com registros reais de `Comissao` gerados na conclusão do agendamento.
+
+**Modelos (`modeloComissao` no Profissional):**
+
+| Modelo | Cálculo |
+|--------|---------|
+| `PERCENTUAL_FIXO` | % fixo sobre o total do atendimento |
+| `PERCENTUAL_SERVICO` | % por serviço (via `ComissaoServico`), fallback para `comissaoPadrao` |
+| `VALOR_FIXO` | valor fixo por atendimento (`valorFixoComissao`) |
+| `LOCACAO_CADEIRA` | sem comissão (profissional aluga a cadeira) |
+
+**Arquivos:**
+- `app/api/agenda/route.ts` (linhas ~365-418) — cálculo da comissão na conclusão do agendamento, suportando os 4 modelos. Grava o campo `modelo` no registro `Comissao`.
+- `app/api/comissoes/route.ts` — **NOVO**. `GET` lista comissões agrupadas por profissional com filtros (`profissionalId`, `mes`, `status`). `PATCH` marca comissões como pagas por array de IDs. Retorna `{ profissionais, totais: { totalGeral, totalPago, totalPendente } }`.
+- `app/api/comissoes/fechamento/route.ts` — **NOVO**. `GET` lista fechamentos passados. `POST` fecha um período atomicamente via `prisma.$transaction` — cria `FechamentoComissao` e marca todas as comissões incluídas como pagas.
+- `app/api/profissionais/[id]/comissao-servico/route.ts` — **NOVO**. `GET` retorna config de comissão do profissional + todos os serviços com taxas customizadas. `PUT` atualiza o modelo e faz upsert das taxas por serviço.
+- `app/financeiro/comissoes/page.tsx` — **NOVA página**. KPIs, comissões agrupadas por profissional, pagamento em lote, modal de fechamento de período, botão de exportação.
+
+## Feature #6 — Contas a Pagar + Fornecedores
+
+Fluxo de status: `PENDENTE` → `VENCIDO` (automático quando `dataVencimento < hoje`) → `PAGO` (cria `Transacao` de despesa).
+
+**Arquivos:**
+- `app/api/financeiro/contas-pagar/route.ts` — **NOVO**. CRUD completo. Marca vencidas automaticamente (`marcarVencidas`), estatísticas de resumo. `PATCH` para `PAGO` cria uma `Transacao`. `DELETE` bloqueia contas já pagas.
+- `app/api/fornecedores/route.ts` — **NOVO**. CRUD com soft-delete (`ativo=false`).
+- `app/financeiro/contas-pagar/page.tsx` — **NOVA página**. KPIs (pendente, vencido, pago, próximos 7 dias), gestão de contas, modal de fornecedores, gestão de status.
+
+## Feature #7 — Relatórios / Exportações
+
+- `app/api/relatorios/route.ts` — **NOVO**. `GET` gera relatórios de DRE, comissões ou fluxo-de-caixa em XLSX (via `exceljs`) ou CSV com BOM UTF-8. Faz fallback para CSV se `exceljs` não estiver instalado.
+- Botões de exportação adicionados em `app/financeiro/page.tsx` (`tipo=fluxo-caixa`) e `app/financeiro/dre/page.tsx` (`tipo=dre`).
+- Dependência `exceljs` instalada.
+
+## Schema Prisma — Relações adicionadas
+
+O model `FechamentoComissao` estava sem relações. Adicionadas:
+```prisma
+model FechamentoComissao {
+  // ...
+  estabelecimento Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  profissional    Profissional    @relation(fields: [profissionalId], references: [id])
+}
+model Profissional {
+  // ...
+  fechamentos FechamentoComissao[]
+}
+model Estabelecimento {
+  // ...
+  fechamentosComissao FechamentoComissao[]
+}
+```
+Rodado `prisma db push` + `prisma generate` com sucesso.
+
+---
+
+## Sincronização da página Financeiro ↔ Contas a Pagar
+
+A página principal (`/financeiro`) tinha seções de contas a receber/despesas dessincronizadas com a nova página de Contas a Pagar. Correções feitas:
+
+### `app/api/financeiro/route.ts`
+
+1. **Comissões reais**: substituída a fórmula estática por registros reais de `Comissao` via `groupBy`:
+```typescript
+const comissoesReais = await prisma.comissao.groupBy({
+  by: ["profissionalId"],
+  where: { agendamento: { estabelecimentoId: estabId, status: "CONCLUIDO", dataHoraInicio: { gte: inicioMesAtual, lt: fimMesAtual } } },
+  _sum: { valorComissao: true, valorBase: true },
+})
+// Fallback para comissaoPadrao caso não haja registro
+```
+2. **Despesas do mês**: o aggregate de despesas passou a filtrar pelo mês atual (`dataTransacao: { gte: inicioMesAtual, lt: fimMesAtual }`) em vez de todo o histórico. `inicioMesAtual`/`fimMesAtual` movidos para o topo do handler `GET`.
+3. **Resumo de Contas a Pagar** adicionado à resposta. Marca vencidas automaticamente e retorna pendente/vencido (totais + contagem) e as 5 próximas contas vencendo em 7 dias:
+```typescript
+const proxSemana = new Date(hoje); proxSemana.setDate(proxSemana.getDate() + 7)
+await prisma.contaPagar.updateMany({
+  where: { estabelecimentoId: estabId, status: "PENDENTE", dataVencimento: { lt: hoje } },
+  data: { status: "VENCIDO" },
+})
+// contasPagar: { totalPendente, countPendente, totalVencido, countVencido, proximas[] }
+```
+> ⚠️ Cuidado com colisão de nomes: já existe `em7dias` na seção de projeção — a variável de contas a pagar foi nomeada `proxSemana`.
+
+### `app/financeiro/page.tsx`
+
+- Adicionada interface `ContasPagarData` e campo opcional `contasPagar` em `FinanceiroData`.
+- Nova seção **"Contas a pagar"** entre "Contas a receber" e "Despesas recorrentes":
+  - Badges de contagem (pendentes / vencidas)
+  - Cards de KPI (total pendente em âmbar, total vencido em vermelho)
+  - Lista das próximas 5 contas vencendo em 7 dias, com indicador de status
+  - Link "Ver todas →" para `/financeiro/contas-pagar`
+
+---
+
+## Navegação do Financeiro
+
+Botões no cabeçalho de `/financeiro`: **Registrar despesa**, **Exportar** (fluxo-de-caixa CSV), **Comissões** (`/financeiro/comissoes`), **Contas a pagar** (`/financeiro/contas-pagar`), **DRE** (`/financeiro/dre`), **Formas de pagamento**.
+
+---
+
+## Padrões e observações desta onda
+
+- Todos os endpoints usam scoping multi-tenant por `estabelecimentoId` (via `getUsuarioLogado`/`requirePermissao`).
+- Middleware protege todas as rotas — chamadas de API sem sessão retornam 401 e redirecionam para o Auth0 (esperado ao testar via `curl`).
+- Cache do webpack pode reter erros antigos após renomear variáveis; se um erro de compilação persistir mesmo após corrigir, limpar `.next/cache` e reiniciar o dev server.
+- Ação pendente do usuário permanece: rodar `fetch('/api/estoque/corrigir', { method: 'POST' })` no console para corrigir registros de estoque antigos.

@@ -366,18 +366,52 @@ export async function PATCH(request: Request) {
     if (!existeComissao) {
       const profissional = await prisma.profissional.findUnique({
         where: { id: agendamento.profissionalId },
-        select: { comissaoPadrao: true },
+        select: { comissaoPadrao: true, modeloComissao: true, valorFixoComissao: true },
       })
-      const pct = Number(profissional?.comissaoPadrao ?? 0)
-      if (pct > 0) {
-        const valorComissao = Number(agendamento.valorTotal) * (pct / 100)
+
+      const modelo = profissional?.modeloComissao ?? "PERCENTUAL_FIXO"
+      const valorTotal = Number(agendamento.valorTotal)
+      let valorComissao = 0
+      let percentual = 0
+
+      if (modelo === "PERCENTUAL_FIXO") {
+        percentual = Number(profissional?.comissaoPadrao ?? 0)
+        valorComissao = valorTotal * (percentual / 100)
+      } else if (modelo === "PERCENTUAL_SERVICO") {
+        const servicosAgendamento = await prisma.agendamentoServico.findMany({
+          where: { agendamentoId },
+          select: { servicoId: true, preco: true },
+        })
+        const comissoesServico = await prisma.comissaoServico.findMany({
+          where: {
+            profissionalId: agendamento.profissionalId,
+            servicoId: { in: servicosAgendamento.map((s) => s.servicoId) },
+          },
+        })
+        const mapaComissao = new Map(
+          comissoesServico.map((cs) => [cs.servicoId, Number(cs.percentual)])
+        )
+        const pctPadrao = Number(profissional?.comissaoPadrao ?? 0)
+        for (const s of servicosAgendamento) {
+          const pct = mapaComissao.get(s.servicoId) ?? pctPadrao
+          valorComissao += Number(s.preco) * (pct / 100)
+        }
+        percentual = valorTotal > 0 ? (valorComissao / valorTotal) * 100 : 0
+      } else if (modelo === "VALOR_FIXO") {
+        valorComissao = Number(profissional?.valorFixoComissao ?? 0)
+        percentual = valorTotal > 0 ? (valorComissao / valorTotal) * 100 : 0
+      }
+      // LOCACAO_CADEIRA: sem comissão por atendimento (custo mensal fixo)
+
+      if (valorComissao > 0) {
         await prisma.comissao.create({
           data: {
             agendamentoId,
             profissionalId: agendamento.profissionalId,
+            modelo: modelo as any,
             valorBase: agendamento.valorTotal,
-            percentual: pct,
-            valorComissao,
+            percentual: Math.round(percentual * 100) / 100,
+            valorComissao: Math.round(valorComissao * 100) / 100,
           },
         })
       }

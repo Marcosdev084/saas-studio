@@ -42,21 +42,36 @@ export async function GET(request: Request) {
 
   await processarRecorrentes(estabId)
 
+  const inicioMesAtual = new Date(); inicioMesAtual.setDate(1); inicioMesAtual.setHours(0, 0, 0, 0)
+  const fimMesAtual = new Date(inicioMesAtual.getFullYear(), inicioMesAtual.getMonth() + 1, 1)
+
   const profissionais = await prisma.profissional.findMany({
     where: { estabelecimentoId: estabId, ativo: true },
-    select: { id: true, nome: true, cor: true, receitaTotal: true, comissaoPadrao: true, totalAtendimentos: true },
+    select: { id: true, nome: true, cor: true, receitaTotal: true, comissaoPadrao: true, modeloComissao: true, totalAtendimentos: true },
     orderBy: { receitaTotal: "desc" },
   })
 
-  const receitaPorProf = profissionais.map((p) => ({
-    nome: p.nome, cor: p.cor,
-    receita: Number(p.receitaTotal), comissaoPct: Number(p.comissaoPadrao),
-    comissao: Math.round(Number(p.receitaTotal) * (Number(p.comissaoPadrao) / 100)),
-  }))
+  const comissoesReais = await prisma.comissao.groupBy({
+    by: ["profissionalId"],
+    where: { agendamento: { estabelecimentoId: estabId, status: "CONCLUIDO", dataHoraInicio: { gte: inicioMesAtual, lt: fimMesAtual } } },
+    _sum: { valorComissao: true, valorBase: true },
+  })
+  const comissaoMap = new Map(comissoesReais.map((c) => [c.profissionalId, { comissao: Number(c._sum.valorComissao ?? 0), base: Number(c._sum.valorBase ?? 0) }]))
+
+  const receitaPorProf = profissionais.map((p) => {
+    const real = comissaoMap.get(p.id)
+    const comissao = real ? Math.round(real.comissao) : Math.round(Number(p.receitaTotal) * (Number(p.comissaoPadrao) / 100))
+    return {
+      nome: p.nome, cor: p.cor,
+      receita: Number(p.receitaTotal), comissaoPct: Number(p.comissaoPadrao),
+      modelo: p.modeloComissao,
+      comissao,
+    }
+  })
 
   const totalReceita = receitaPorProf.reduce((a, p) => a + p.receita, 0)
   const totalComissoes = receitaPorProf.reduce((a, p) => a + p.comissao, 0)
-  const despesasAgg = await prisma.transacao.aggregate({ where: { estabelecimentoId: estabId, tipo: "DESPESA" }, _sum: { valor: true } })
+  const despesasAgg = await prisma.transacao.aggregate({ where: { estabelecimentoId: estabId, tipo: "DESPESA", dataTransacao: { gte: inicioMesAtual, lt: fimMesAtual } }, _sum: { valor: true } })
   const totalDespesas = Number(despesasAgg._sum.valor ?? 0)
 
   const cores = ["#105a73", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#94A3B8"]
@@ -131,8 +146,6 @@ export async function GET(request: Request) {
   })
 
   // CMV: custo dos insumos consumidos em atendimentos concluídos no mês atual
-  const inicioMesAtual = new Date(); inicioMesAtual.setDate(1); inicioMesAtual.setHours(0, 0, 0, 0)
-  const fimMesAtual = new Date(inicioMesAtual.getFullYear(), inicioMesAtual.getMonth() + 1, 1)
   const cmvSaidas = await prisma.movimentacaoEstoque.findMany({
     where: { estabelecimentoId: estabId, tipo: "SAIDA", criadoEm: { gte: inicioMesAtual, lt: fimMesAtual } },
     select: { quantidade: true, custoUnitario: true },
@@ -166,10 +179,44 @@ export async function GET(request: Request) {
     }
   }).sort((a, b) => b.margem - a.margem)
 
+  // Resumo de contas a pagar
+  const hoje = new Date()
+  hoje.setHours(0, 0, 0, 0)
+  const proxSemana = new Date(hoje)
+  proxSemana.setDate(proxSemana.getDate() + 7)
+
+  await prisma.contaPagar.updateMany({
+    where: { estabelecimentoId: estabId, status: "PENDENTE", dataVencimento: { lt: hoje } },
+    data: { status: "VENCIDO" },
+  })
+
+  const [cpPendentes, cpVencidas, cpProximas] = await Promise.all([
+    prisma.contaPagar.aggregate({ where: { estabelecimentoId: estabId, status: "PENDENTE" }, _sum: { valor: true }, _count: true }),
+    prisma.contaPagar.aggregate({ where: { estabelecimentoId: estabId, status: "VENCIDO" }, _sum: { valor: true }, _count: true }),
+    prisma.contaPagar.findMany({
+      where: { estabelecimentoId: estabId, status: { in: ["PENDENTE", "VENCIDO"] }, dataVencimento: { lte: proxSemana } },
+      include: { fornecedor: { select: { nome: true } } },
+      orderBy: { dataVencimento: "asc" },
+      take: 5,
+    }),
+  ])
+
+  const contasPagar = {
+    totalPendente: Number(cpPendentes._sum.valor ?? 0),
+    countPendente: cpPendentes._count,
+    totalVencido: Number(cpVencidas._sum.valor ?? 0),
+    countVencido: cpVencidas._count,
+    proximas: cpProximas.map((c) => ({
+      id: c.id, descricao: c.descricao, valor: Number(c.valor),
+      dataVencimento: c.dataVencimento, status: c.status,
+      fornecedor: c.fornecedor?.nome ?? null,
+    })),
+  }
+
   return NextResponse.json({
     kpis: { receita: totalReceita, despesas: totalDespesas, lucro: totalReceita - totalDespesas, comissoes: totalComissoes, cmv: Math.round(cmvTotal * 100) / 100 },
     receitaPorProf, receitaPorServico: receitaPorServicoComPct, projecao, totalProjecao, evolucao, despesasRecentes, recorrentes,
-    margemPorServico,
+    margemPorServico, contasPagar,
   })
 }
 

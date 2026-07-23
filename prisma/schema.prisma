@@ -130,6 +130,20 @@ enum TipoMovEstoque {
   AJUSTE
 }
 
+enum ModeloComissao {
+  PERCENTUAL_FIXO
+  PERCENTUAL_SERVICO
+  VALOR_FIXO
+  LOCACAO_CADEIRA
+}
+
+enum StatusPagar {
+  PENDENTE
+  PAGO
+  VENCIDO
+  CANCELADO
+}
+
 enum OrigemReceber {
   CARTAO
   FIADO
@@ -184,6 +198,9 @@ model Estabelecimento {
   formasPagamento     FormaPagamento[]
   contasReceber       ContaReceber[]
   caixasDiarios       CaixaDiario[]
+  fornecedores        Fornecedor[]
+  contasPagar         ContaPagar[]
+  fechamentosComissao FechamentoComissao[]
 
   @@map("estabelecimentos")
 }
@@ -247,6 +264,9 @@ model Profissional {
   avatarUrl         String?
   cor               String?       @default("#0D9488")
   comissaoPadrao    Decimal       @default(40) @db.Decimal(5, 2)
+  modeloComissao    ModeloComissao @default(PERCENTUAL_FIXO)
+  valorFixoComissao Decimal?      @db.Decimal(10, 2)
+  valorLocacao      Decimal?      @db.Decimal(10, 2)
   ativo             Boolean       @default(true)
   criadoEm         DateTime      @default(now())
   atualizadoEm     DateTime      @updatedAt
@@ -261,6 +281,8 @@ model Profissional {
   servicos          ProfissionalServico[]
   agendamentos      Agendamento[]
   comissoes         Comissao[]
+  comissoesServico  ComissaoServico[]
+  fechamentos       FechamentoComissao[]
   configHorarios    ConfigHorario[]
 
   @@index([estabelecimentoId])
@@ -287,6 +309,7 @@ model Servico {
   profissionais     ProfissionalServico[]
   agendamentos      AgendamentoServico[]
   insumos           ServicoInsumo[]
+  comissoesServico  ComissaoServico[]
 
   @@index([estabelecimentoId])
   @@map("servicos")
@@ -592,22 +615,105 @@ model DespesaRecorrente {
 }
 
 model Comissao {
-  id              String      @id @default(cuid())
-  agendamentoId   String      @unique
+  id              String         @id @default(cuid())
+  agendamentoId   String         @unique
   profissionalId  String
-  valorBase       Decimal     @db.Decimal(10, 2)
-  percentual      Decimal     @db.Decimal(5, 2)
-  valorComissao   Decimal     @db.Decimal(10, 2)
-  pago            Boolean     @default(false)
+  valorBase       Decimal        @db.Decimal(10, 2)
+  percentual      Decimal        @db.Decimal(5, 2)
+  valorComissao   Decimal        @db.Decimal(10, 2)
+  modelo          ModeloComissao @default(PERCENTUAL_FIXO)
+  pago            Boolean        @default(false)
   pagoEm         DateTime?
-  criadoEm       DateTime    @default(now())
+  fechamentoId    String?
+  criadoEm       DateTime       @default(now())
 
-  agendamento     Agendamento  @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
-  profissional    Profissional @relation(fields: [profissionalId], references: [id])
+  agendamento     Agendamento       @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+  profissional    Profissional      @relation(fields: [profissionalId], references: [id])
+  fechamento      FechamentoComissao? @relation(fields: [fechamentoId], references: [id])
 
   @@index([profissionalId])
   @@index([pago])
+  @@index([fechamentoId])
   @@map("comissoes")
+}
+
+model ComissaoServico {
+  id              String       @id @default(cuid())
+  profissionalId  String
+  servicoId       String
+  percentual      Decimal      @db.Decimal(5, 2)
+
+  profissional    Profissional @relation(fields: [profissionalId], references: [id], onDelete: Cascade)
+  servico         Servico      @relation(fields: [servicoId], references: [id], onDelete: Cascade)
+
+  @@unique([profissionalId, servicoId])
+  @@map("comissoes_servico")
+}
+
+model FechamentoComissao {
+  id                String       @id @default(cuid())
+  estabelecimentoId String
+  profissionalId    String
+  periodoInicio     DateTime
+  periodoFim        DateTime
+  totalBruto        Decimal      @db.Decimal(10, 2)
+  descontos         Decimal      @default(0) @db.Decimal(10, 2)
+  totalLiquido      Decimal      @db.Decimal(10, 2)
+  observacoes       String?
+  criadoEm          DateTime     @default(now())
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id])
+  profissional      Profissional    @relation(fields: [profissionalId], references: [id])
+  comissoes         Comissao[]
+
+  @@index([estabelecimentoId])
+  @@index([profissionalId])
+  @@map("fechamentos_comissao")
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CONTAS A PAGAR
+// ═══════════════════════════════════════════════════════════════════
+
+model Fornecedor {
+  id                String       @id @default(cuid())
+  estabelecimentoId String
+  nome              String
+  cnpjCpf           String?
+  telefone          String?
+  email             String?
+  observacoes       String?
+  ativo             Boolean      @default(true)
+  criadoEm          DateTime     @default(now())
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  contasPagar       ContaPagar[]
+
+  @@index([estabelecimentoId])
+  @@map("fornecedores")
+}
+
+model ContaPagar {
+  id                String      @id @default(cuid())
+  estabelecimentoId String
+  fornecedorId      String?
+  descricao         String
+  valor             Decimal     @db.Decimal(10, 2)
+  categoria         String?
+  dataVencimento    DateTime    @db.Date
+  dataPagamento     DateTime?
+  status            StatusPagar @default(PENDENTE)
+  observacoes       String?
+  recorrente        Boolean     @default(false)
+  criadoEm          DateTime    @default(now())
+
+  estabelecimento   Estabelecimento @relation(fields: [estabelecimentoId], references: [id], onDelete: Cascade)
+  fornecedor        Fornecedor?     @relation(fields: [fornecedorId], references: [id])
+
+  @@index([estabelecimentoId])
+  @@index([dataVencimento])
+  @@index([status])
+  @@map("contas_pagar")
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -60,6 +60,23 @@ interface Recorrente {
   criadoEm: string
 }
 
+interface ContaPagarResumo {
+  id: string
+  descricao: string
+  valor: number
+  dataVencimento: string
+  status: string
+  fornecedor: string | null
+}
+
+interface ContasPagarData {
+  totalPendente: number
+  countPendente: number
+  totalVencido: number
+  countVencido: number
+  proximas: ContaPagarResumo[]
+}
+
 interface FinanceiroData {
   kpis: {
     receita: number
@@ -76,6 +93,7 @@ interface FinanceiroData {
   despesasRecentes: Despesa[]
   recorrentes: Recorrente[]
   margemPorServico: MargemServico[]
+  contasPagar?: ContasPagarData
 }
 
 interface MargemServico {
@@ -299,29 +317,24 @@ export default function FinanceiroPage() {
             <Plus size={15} /> <span className="hidden sm:inline">Registrar despesa</span><span className="sm:hidden">Despesa</span>
           </button>
           <button onClick={() => {
-            if (!data) return
-            const lines = ["Tipo,Descrição,Categoria,Valor,Data"]
-            for (const d of data.despesasRecentes) {
-              lines.push(`Despesa,"${d.descricao}",${d.categoria ?? ""},${d.valor},${new Date(d.dataTransacao).toLocaleDateString("pt-BR")}`)
-            }
-            for (const r of data.recorrentes) {
-              lines.push(`Recorrente,"${r.descricao}",${r.categoria ?? ""},${r.valor},Dia ${r.diaVencimento ?? "-"}`)
-            }
-            lines.push("")
-            lines.push(`Receita total,,,"${data.kpis.receita}",`)
-            lines.push(`Despesas totais,,,"${data.kpis.despesas}",`)
-            lines.push(`Lucro,,,"${data.kpis.lucro}",`)
-            const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
-            const url = URL.createObjectURL(blob)
+            const now = new Date()
+            const mes = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`
             const a = document.createElement("a")
-            a.href = url
-            a.download = `financeiro-${new Date().toISOString().split("T")[0]}.csv`
+            a.href = `/api/relatorios?tipo=fluxo-caixa&mes=${mes}&formato=csv`
+            a.download = `fluxo-caixa-${mes}.csv`
             a.click()
-            URL.revokeObjectURL(url)
             toast("Relatório exportado com sucesso")
           }} className="text-xs sm:text-sm font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
             <FileText size={15} /> <span className="hidden sm:inline">Exportar</span>
           </button>
+          <Link href="/financeiro/comissoes"
+            className="text-xs sm:text-sm font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
+            <DollarSign size={15} /> <span className="hidden sm:inline">Comissões</span>
+          </Link>
+          <Link href="/financeiro/contas-pagar"
+            className="text-xs sm:text-sm font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
+            <Receipt size={15} /> <span className="hidden sm:inline">Contas a pagar</span>
+          </Link>
           <Link href="/financeiro/dre"
             className="text-xs sm:text-sm font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
             <FileText size={15} /> <span className="hidden sm:inline">DRE</span>
@@ -684,6 +697,73 @@ export default function FinanceiroPage() {
           </div>
         )}
       </div>
+
+      {/* Contas a pagar - resumo */}
+      {!loading && data?.contasPagar && (
+        <div className="glass-card rounded-2xl p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Receipt size={16} className="text-amber-500" />
+              <h3 className="text-sm font-bold text-base-primary">Contas a pagar</h3>
+              {data.contasPagar.countPendente > 0 && (
+                <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                  {data.contasPagar.countPendente} pendente{data.contasPagar.countPendente > 1 ? "s" : ""}
+                </span>
+              )}
+              {data.contasPagar.countVencido > 0 && (
+                <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
+                  {data.contasPagar.countVencido} vencida{data.contasPagar.countVencido > 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+            <Link href="/financeiro/contas-pagar" className="text-xs text-accent-600 hover:text-accent-700 font-medium">
+              Ver todas →
+            </Link>
+          </div>
+
+          {/* KPIs inline */}
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-100">
+              <p className="text-[10px] text-amber-600 font-medium">Pendente</p>
+              <p className="text-lg font-bold text-amber-700">R$ {data.contasPagar.totalPendente.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-red-50 border border-red-100">
+              <p className="text-[10px] text-red-600 font-medium">Vencido</p>
+              <p className="text-lg font-bold text-red-700">R$ {data.contasPagar.totalVencido.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
+            </div>
+          </div>
+
+          {/* Próximas contas */}
+          {data.contasPagar.proximas.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-[11px] text-base-muted font-medium">Próximos vencimentos (7 dias)</p>
+              {data.contasPagar.proximas.map((c) => (
+                <div key={c.id} className="flex items-center gap-3 p-3 rounded-xl border border-surface-border-light">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${c.status === "VENCIDO" ? "bg-red-50" : "bg-amber-50"}`}>
+                    <Receipt size={16} className={c.status === "VENCIDO" ? "text-red-500" : "text-amber-500"} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-base-primary truncate">{c.descricao}</p>
+                    <p className="text-[11px] text-base-muted">
+                      {c.fornecedor && <span>{c.fornecedor} · </span>}
+                      Venc. {new Date(c.dataVencimento).toLocaleDateString("pt-BR")}
+                      {c.status === "VENCIDO" && <span className="text-red-500 font-medium"> · vencido</span>}
+                    </p>
+                  </div>
+                  <span className={`text-sm font-semibold shrink-0 ${c.status === "VENCIDO" ? "text-red-500" : "text-amber-600"}`}>
+                    R$ {c.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-4 text-base-muted/60">
+              <Receipt size={24} className="mx-auto mb-2 opacity-30" />
+              <p className="text-sm">Nenhuma conta vencendo nos próximos 7 dias</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Despesas recorrentes */}
       <div className="glass-card rounded-2xl p-5">

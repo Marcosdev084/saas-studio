@@ -118,6 +118,15 @@ export default function DREPage() {
               <option key={m.value} value={m.value}>{m.label}</option>
             ))}
           </select>
+          <button onClick={() => {
+            const mes = mesSel || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`
+            const a = document.createElement("a")
+            a.href = `/api/relatorios?tipo=dre&mes=${mes}&formato=csv`
+            a.download = `dre-${mes}.csv`
+            a.click()
+          }} className="text-xs font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
+            <BarChart3 size={13} /> Exportar
+          </button>
           <button onClick={() => setShowConfig(true)} className="text-xs font-medium text-base-secondary border border-surface-border hover:bg-surface-base px-3 py-2 rounded-lg flex items-center gap-1.5">
             <Settings2 size={13} /> Config
           </button>
